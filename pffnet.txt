@@ -7,7 +7,44 @@ main()
     train(cfg, args.local_rank, args.distributed)
         model = build_detection_model(cfg)
             GeneralizedRCNN(cfg)
+                # R-101-FPN
                 backbone, semseg = build_backbone(cfg)
+                    body = resnet.ResNet(cfg)
+                    
+                    # ResNet_fpn
+                    fpn = fpn_module.FPN(...)
+                    model = nn.Sequential(OrderedDict([("body", body), ("fpn", fpn)])) # OrderedDict:順序付き辞書
+                    
+                    # ResNet_semantic
+                    sem_branch = mcgcn.RGCN(in_channels_list, middle_channels, sem_out_channel, conv_block) # PFFNet/maskrcnn_benchmark/modeling/sem_branch/mcgcn.py
+                        RGCN(nn.Module):
+                            for idx, in_channels in enumerate(in_channels_list, 1):
+                                gcn_block  = RESBlock[x_conv_conv_out+res]
+                                res_block  = GCNBlock[conv5_1_conv1_5+conv1_5_conv5_1]
+                                res2_block = GCNBlock[conv5_1_conv1_5+conv1_5_conv5_1]
+                                inner_block = conv1_1
+                                layer_block = conv3_3
+                            
+                            # last_inner
+                            last_inner = gcn_block__res2_block
+                            
+                            for idx, in_channels in enumerate(in_channels_list, 1):
+                                # scaled_last_inner
+                                inner_top_down = F.interpolate(last_inner, scale_factor=2, mode="nearest")
+                                
+                                # this_inner_lateral2
+                                inner_lateral2 = gcn_blocks__res2_blocks
+
+                                # last_inner
+                                last_inner_pre = inner_lateral2 + inner_top_down
+                                last_inner = res_blocks[-idx+1])(last_inner_pre)
+                                
+                                results.insert(0, last_inner)
+                            
+                            
+                    model_sem = nn.Sequential(OrderedDict([("body", body), ("semseg", sem_branch)]))
+                    
+                
                 rpn = build_rpn(cfg, self.backbone.out_channels)
                 roi_heads = build_roi_heads(cfg, self.backbone.out_channels)
                 roi_feature_fusion = build_roi_feature_fusion(cfg)
