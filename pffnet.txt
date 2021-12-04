@@ -7,9 +7,10 @@ main()
     train(cfg, args.local_rank, args.distributed)
         model = build_detection_model(cfg)
             GeneralizedRCNN(cfg)
-                backbone = build_backbone(cfg)
+                backbone, semseg = build_backbone(cfg)
                 rpn = build_rpn(cfg, self.backbone.out_channels)
                 roi_heads = build_roi_heads(cfg, self.backbone.out_channels)
+                roi_feature_fusion = build_roi_feature_fusion(cfg)
         
         optimizer = make_optimizer(cfg, model)
         scheduler = make_lr_scheduler(cfg, optimizer)
@@ -23,6 +24,48 @@ main()
         data_loader_val = make_data_loader(cfg, is_train=False, is_distributed=distributed, is_for_period=True)
         
         do_train(cfg, model, data_loader, data_loader_val, optimizer, scheduler, checkpointer, device, checkpoint_period, test_period, arguments, )
+            # GeneralizedRCNN
+            model.forward(self, images, targets=None, semgt = None)
+                features_all = self.backbone(images.tensors)
+                
+                # feature
+                features = features_all[1:]
+                
+                # semantic
+                fpn_semantic_pred = features_all[0]
+                pred_sembranch = self.semseg(images.tensors)
+                
+                # rpn
+                proposals, proposal_losses, feat_rpn_scales = self.rpn(images, features, targets)
+                
+                # roi
+                x, result, detector_losses, masks, bboxes = self.roi_heads(features, proposals, targets)
+                
+                # loss detector, proposal
+                losses = {}
+                losses.update(detector_losses)
+                losses.update(proposal_losses)
+                
+                # loss semantic
+                sembranch_loss = nn.CrossEntropyLoss()(pred_sembranch, gt_semseg)
+                sembranch_losses = {'loss_sem_branch': sembranch_loss}
+                losses.update(sembranch_losses)
+                
+                # loss mask
+                pred_maskfusion = self.roi_feature_fusion(masks, bboxes, fpn_semantic_pred)
+                maskfusion_loss = nn.CrossEntropyLoss()(pred_maskfusion, gt_semseg)
+                maskfusion_losses = {'loss_mask_fusion': maskfusion_loss}
+                losses.update(maskfusion_losses)
+                
+                # loss semantic_mask
+                prob_sembranch = nn.Softmax(dim=1)(pred_sembranch)
+                prob_maskfusion = nn.Softmax(dim=1)(pred_maskfusion)
+                sem_consistence_loss = nn.MSELoss()(prob_sembranch, prob_maskfusion) * self.sem_consistence_lambda
+                sem_consistence_losses = {'loss_sem_consistence': sem_consistence_loss}
+                losses.update(sem_consistence_losses)
+                
+                return losses
+                
 
 
 
