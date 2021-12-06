@@ -6,17 +6,28 @@ main()
     # distributed:num_gpus > 1
     train(cfg, args.local_rank, args.distributed)
         model = build_detection_model(cfg)
+        
+            # PFFNet/maskrcnn_benchmark/modeling/detector/generalized_rcnn.py
             GeneralizedRCNN(cfg)
-                # R-101-FPN
+                
+                # PFFNet/maskrcnn_benchmark/modeling/backbone/backbone.py # R-101-FPN
                 backbone, semseg = build_backbone(cfg)
                     body = resnet.ResNet(cfg)
                     
                     # ResNet_fpn
                     fpn = fpn_module.FPN(...)
                     model = nn.Sequential(OrderedDict([("body", body), ("fpn", fpn)])) # OrderedDict:順序付き辞書
+                        in_channels_list=[
+                            in_channels_stage2, # cfg.MODEL.RESNETS.RES2_OUT_CHANNELS:256
+                            in_channels_stage2 * 2,
+                            in_channels_stage2 * 4,
+                            in_channels_stage2 * 8,
+                        ],
+                        out_channels=out_channels,
                     
                     # ResNet_semantic
-                    sem_branch = mcgcn.RGCN(in_channels_list, middle_channels, sem_out_channel, conv_block) # PFFNet/maskrcnn_benchmark/modeling/sem_branch/mcgcn.py
+                    # PFFNet/maskrcnn_benchmark/modeling/sem_branch/mcgcn.py
+                    sem_branch = mcgcn.RGCN(in_channels_list, middle_channels, sem_out_channel, conv_block) 
                         RGCN(nn.Module):
                             for idx, in_channels in enumerate(in_channels_list, 1):
                                 gcn_block  = RESBlock[x_conv_conv_out+res]
@@ -28,6 +39,7 @@ main()
                             # last_inner
                             last_inner = gcn_block__res2_block
                             
+                            # C1 > C3
                             for idx, in_channels in enumerate(in_channels_list, 1):
                                 # scaled_last_inner
                                 inner_top_down = F.interpolate(last_inner, scale_factor=2, mode="nearest")
@@ -39,15 +51,66 @@ main()
                                 last_inner_pre = inner_lateral2 + inner_top_down
                                 last_inner = res_blocks[-idx+1])(last_inner_pre)
                                 
-                                results.insert(0, last_inner)
-                            
+                                results.insert(0, last_inner)                            
                             
                     model_sem = nn.Sequential(OrderedDict([("body", body), ("semseg", sem_branch)]))
                     
                 
                 rpn = build_rpn(cfg, self.backbone.out_channels)
+                
+                    # PFFNet/maskrcnn_benchmark/modeling/rpn/rpn.py
+                    RPNModule()
+                        init()
+                            anchor_generator = make_anchor_generator(cfg)
+                                cell_anchors = [
+                                                generate_anchors(anchor_stride, size if isinstance(size, (tuple, list)) else (size,), aspect_ratios).float()
+                                                    grid_sizes = [feature_map.shape[-2:] for feature_map in feature_maps]
+                                                    anchors_over_all_feature_maps = self.grid_anchors(grid_sizes)
+                                                        shifts_x = torch.arange(0, grid_width * stride, step=stride, dtype=torch.float32, device=device)
+                                                        shifts_y = torch.arange(0, grid_height * stride, step=stride, dtype=torch.float32, device=device)
+                                                        shift_y, shift_x = torch.meshgrid(shifts_y, shifts_x)
+                                                        shifts = torch.stack((shift_x, shift_y, shift_x, shift_y), dim=1)
+                                                        anchors.append((shifts.view(-1, 1, 4) + base_anchors.view(1, -1, 4)).reshape(-1, 4))
+                                                        
+                                                    for i, (image_height, image_width) in enumerate(image_list.image_sizes):
+                                                        for anchors_per_feature_map in anchors_over_all_feature_maps:
+                                                            boxlist = BoxList(anchors_per_feature_map, (image_width, image_height), mode="xyxy")
+                                                            self.add_visibility_to(boxlist)
+                                                                inds_inside = 0 or 1
+                                                            anchors_in_image.append(boxlist)
+                                                        anchors.append(anchors_in_image)
+                                                    
+                                                for anchor_stride, size in zip(anchor_strides, sizes)
+                                                ]
+
+                            # PFFNet/maskrcnn_benchmark/config/defaults.py
+                            # rpn_head:cfg.MODEL.RPN.RPN_HEAD:"SingleConvRPNHead"
+                            head = rpn_head(cfg, in_channels, anchor_generator.num_anchors_per_location()[0])
+
+
+                            rpn_box_coder = BoxCoder(weights=(1.0, 1.0, 1.0, 1.0))                        
+
+                            box_selector_train = make_rpn_postprocessor(cfg, rpn_box_coder, is_train=True)                        
+
+                            loss_evaluator = make_rpn_loss_evaluator(cfg, rpn_box_coder)
+                        
+                        
+                        _forward_train(self, feat_rpn_scales, anchors, objectness, rpn_box_regression, targets):
+                        
+                            boxes = self.box_selector_train(anchors, objectness, rpn_box_regression, targets)
+                        
+                            loss_objectness, loss_rpn_box_reg = self.loss_evaluator(anchors, objectness, rpn_box_regression, targets)
+                
+                
+                
                 roi_heads = build_roi_heads(cfg, self.backbone.out_channels)
+                
+                
+                
                 roi_feature_fusion = build_roi_feature_fusion(cfg)
+                
+                
+                
         
         optimizer = make_optimizer(cfg, model)
         scheduler = make_lr_scheduler(cfg, optimizer)
