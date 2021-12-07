@@ -61,6 +61,7 @@ main()
                     # PFFNet/maskrcnn_benchmark/modeling/rpn/rpn.py
                     RPNModule()
                         init()
+                            # PFFNet/maskrcnn_benchmark/modeling/rpn/anchor_generator.py
                             anchor_generator = make_anchor_generator(cfg)
                                 init(sizes=(128, 256, 512), aspect_ratios=(0.5, 1.0, 2.0), anchor_strides=(8, 16, 32), straddle_thresh=0,)
                                     cell_anchors = [
@@ -84,6 +85,7 @@ main()
                                     # image > feature_map > boxlist
                                     for i, (image > _height, image_width) in enumerate(image_list.image_sizes):
                                         for anchors_per_feature_map in anchors_over_all_feature_maps:
+                                            # 
                                             boxlist = BoxList(anchors_per_feature_map, (image_width, image_height), mode="xyxy")
                                             self.add_visibility_to(boxlist)
                                                 inds_inside = 0 or 1
@@ -92,25 +94,92 @@ main()
 
                             # PFFNet/maskrcnn_benchmark/config/defaults.py
                             # rpn_head:cfg.MODEL.RPN.RPN_HEAD:"SingleConvRPNHead"
-                            head = rpn_head(cfg, in_channels, anchor_generator.num_anchors_per_location()[0])
+                            head = rpn_head(cfg, in_channels, anchor_generator.num_anchors_per_location()[0])                           
+                                
 
-
+                            # PFFNet/maskrcnn_benchmark/modeling/box_coder.py
                             rpn_box_coder = BoxCoder(weights=(1.0, 1.0, 1.0, 1.0))                        
 
-                            box_selector_train = make_rpn_postprocessor(cfg, rpn_box_coder, is_train=True)                        
+                            # PFFNet/maskrcnn_benchmark/modeling/rpn/inference.py
+                            box_selector_train = make_rpn_postprocessor(cfg, rpn_box_coder, is_train=True)
+                                fpn_post_nms_top_n = 2000
+                                pre_nms_top_n = 1000
+                                post_nms_top_n = 500
+                                fpn_post_nms_per_batch = True
+                                nms_thresh = 0.7
+                                min_size = 0
+                                box_selector = RPNPostProcessor(pre_nms_top_n, post_nms_top_n, nms_thresh, min_size, rpn_box_coder, fpn_post_nms_top_n, fpn_post_nms_per_batch,)
+                                    for a, o, b in zip(anchors, objectness, box_regression):
+                                        sampled_boxes.append(self.forward_for_single_feature_map(a, o, b))
+                                            forward_for_single_feature_map(a, o, b)
+                                                N, A, H, W = objectness.shape
+                                                objectness = permute_and_flatten(objectness, N, A, 1, H, W).view(N, -1)
+                                                objectness = objectness.sigmoid()
+                                                
+                                                box_regression = permute_and_flatten(box_regression, N, A, 4, H, W)
+                                                
+                                                objectness, topk_idx = objectness.topk(pre_nms_top_n, dim=1, sorted=True)
+                                                
+                                                proposals = self.box_coder.decode(box_regression.view(-1, 4), concat_anchors.view(-1, 4))
+                                                
+                                                for proposal, score, im_shape in zip(proposals, objectness, image_shapes):
+                                                    boxlist = BoxList(proposal, im_shape, mode="xyxy")
+                                                    boxlist.add_field("objectness", score)
+                                                    
+                                                    # clip_to_image
+                                                    boxlist = boxlist.clip_to_image(remove_empty=False)
+                                                    
+                                                    # remove_small
+                                                    boxlist = remove_small_boxes(boxlist, self.min_size)
+                                                    
+                                                    # nms
+                                                    boxlist = boxlist_nms(
+                                                        boxlist,
+                                                        self.nms_thresh,
+                                                        max_proposals=self.post_nms_top_n,
+                                                        score_field="objectness",
+                                                    )
+                                                    result.append(boxlist)
+                                    
+                                    boxlists = [cat_boxlist(boxlist) for boxlist in boxlists]
+                                    
+                                    boxlists = select_over_all_levels(boxlists)
+                                    
+                                    boxlists = add_gt_proposals(boxlists, targets)
+
 
                             loss_evaluator = make_rpn_loss_evaluator(cfg, rpn_box_coder)
                         
-                        
-                        _forward_train(self, feat_rpn_scales, anchors, objectness, rpn_box_regression, targets):
-                        
-                            boxes = self.box_selector_train(anchors, objectness, rpn_box_regression, targets)
-                        
-                            loss_objectness, loss_rpn_box_reg = self.loss_evaluator(anchors, objectness, rpn_box_regression, targets)
+                            
+                        forward(self, images, features, targets=None):
+                            objectness, rpn_box_regression, feat_rpn_scales = rpn_head(features)
+                                for feature in x:
+                                    t = F.relu(conv(feature))
+                                    feat_scales.append(t) # nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+                                    logits.append(cls_logits_cov(t)) # (in_channels, num_anchors, kernel_size=1, stride=1)
+                                    bbox_reg.append(self.bbox_pred_cov(t)) # nn.Conv2d(in_channels, num_anchors * 4, kernel_size=1, stride=1)
+                                    
+                                return logits, bbox_reg, feat_scales
+
+                            _forward_train(self, feat_rpn_scales, anchors, objectness, rpn_box_regression, targets):
+
+                                boxes = self.box_selector_train(anchors, objectness, rpn_box_regression, targets)
+
+                                loss_objectness, loss_rpn_box_reg = self.loss_evaluator(anchors, objectness, rpn_box_regression, targets)
                 
                 
                 
                 roi_heads = build_roi_heads(cfg, self.backbone.out_channels)
+                    roi_heads.append(("box", build_roi_box_head(cfg, in_channels)))
+                    
+                    roi_heads.append(("mask", build_roi_mask_head(cfg, in_channels)))
+                    
+                    roi_heads.append(("maskiou", build_roi_maskiou_head(cfg)))
+                    
+                    roi_heads.append(("keypoint", build_roi_keypoint_head(cfg, in_channels)))
+                    
+                    
+                    roi_heads = CombinedROIHeads(cfg, roi_heads)
                 
                 
                 
